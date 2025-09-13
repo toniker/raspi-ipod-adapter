@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# Simple PIN agent for Bluetooth pairing using bluetoothctl
+# Responds with PIN 5999 for all pairing requests
+
+PIN_CODE="5999"
+
+# Wait for Bluetooth to be ready
+while ! pgrep bluetoothd > /dev/null; do
+    sleep 1
+done
+
+echo "$(date): PIN agent starting, waiting for bluetoothd to be fully ready..." >> /tmp/pin_agent.log
+
+sleep 5
+
+# Configure Bluetooth using bluetoothctl
+echo "$(date): Configuring Bluetooth agent..." >> /tmp/pin_agent.log
+
+bluetoothctl << EOF >> /tmp/pin_agent.log 2>&1
+agent NoInputNoOutput
+default-agent
+discoverable on
+pairable on
+quit
+EOF
+
+echo "$(date): PIN agent configuration complete" >> /tmp/pin_agent.log
+
+# The PIN code is set in /etc/bluetooth/main.conf
+# This script just ensures the agent is running and device is discoverable

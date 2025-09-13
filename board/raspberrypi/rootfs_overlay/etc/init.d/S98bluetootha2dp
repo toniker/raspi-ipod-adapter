@@ -1,0 +1,231 @@
+#!/bin/sh
+
+DAEMON="bluetoothd"
+BRCM_PATCHRAM="/usr/bin/brcm_patchram_plus"
+BT_FIRMWARE="/lib/firmware/brcm/BCM43430A1.hcd"
+BT_DEVICE="/dev/ttyAMA0"
+
+#!/bin/sh
+
+DAEMON="bluetoothd"
+BRCM_PATCHRAM="/usr/bin/brcm_patchram_plus"
+BT_FIRMWARE="/lib/firmware/brcm/BCM43430A1.hcd"
+BT_DEVICE="/dev/ttyAMA0"
+
+start() {
+    echo "=== Starting Bluetooth Debug ==="
+    
+    # Check if tools exist
+    echo "Checking tools..."
+    [ -x "$BRCM_PATCHRAM" ] && echo "✓ brcm_patchram_plus found" || echo "✗ brcm_patchram_plus NOT found"
+    [ -x "/usr/bin/hciconfig" ] && echo "✓ hciconfig found" || echo "✗ hciconfig NOT found"
+    [ -x "/usr/bin/bluetoothctl" ] && echo "✓ bluetoothctl found" || echo "✗ bluetoothctl NOT found"
+    [ -x "/usr/libexec/bluetooth/bluetoothd" ] && echo "✓ bluetoothd found" || echo "✗ bluetoothd NOT found"
+    
+    # Check firmware
+    echo "Checking firmware..."
+    if [ -f "$BT_FIRMWARE" ]; then
+        echo "✓ Firmware found: $BT_FIRMWARE"
+    else
+        echo "✗ Primary firmware not found: $BT_FIRMWARE"
+        echo "Searching for alternative firmware..."
+        find /lib/firmware -name "*.hcd" 2>/dev/null | head -5
+        # Try common alternatives
+        for fw in "/lib/firmware/brcm/BCM43430A1.hcd" "/lib/firmware/brcm/BCM4343A1.hcd" "/lib/firmware/BCM43430A1.hcd"; do
+            if [ -f "$fw" ]; then
+                echo "✓ Using alternative firmware: $fw"
+                BT_FIRMWARE="$fw"
+                break
+            fi
+        done
+    fi
+    
+    # Check UART device
+    echo "Checking UART device..."
+    if [ -c "$BT_DEVICE" ]; then
+        echo "✓ UART device found: $BT_DEVICE"
+    else
+        echo "✗ UART device not found: $BT_DEVICE"
+        echo "Available TTY devices:"
+        ls -la /dev/tty* | grep -E "(AMA|S0)"
+    fi
+    
+    # Load firmware
+    echo "Loading Bluetooth firmware..."
+    if [ -f "$BT_FIRMWARE" ] && [ -c "$BT_DEVICE" ]; then
+        echo "Running: $BRCM_PATCHRAM --enable_hci --use_baudrate_for_download --tosleep 200000 --baudrate 921600 --patchram $BT_FIRMWARE $BT_DEVICE"
+        $BRCM_PATCHRAM --enable_hci --use_baudrate_for_download \
+            --tosleep 200000 --baudrate 921600 --patchram "$BT_FIRMWARE" \
+            "$BT_DEVICE" > /tmp/brcm_patchram.log 2>&1 &
+        
+        PATCHRAM_PID=$!
+        echo "Patchram PID: $PATCHRAM_PID"
+        
+        # Wait for the patchram process to finish firmware loading
+        echo "Waiting for firmware loading to complete..."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            if ! kill -0 $PATCHRAM_PID 2>/dev/null; then
+                echo "✓ Patchram process completed after ${i} seconds"
+                break
+            fi
+            echo "Firmware loading... ($i/10)"
+            sleep 1
+        done
+        
+        # If process is still running after 10 seconds, that's normal (it stays running for HCI)
+        if kill -0 $PATCHRAM_PID 2>/dev/null; then
+            echo "✓ Patchram process running (normal for HCI interface)"
+        fi
+        
+        echo "Patchram log:"
+        cat /tmp/brcm_patchram.log
+    else
+        echo "✗ Cannot load firmware - missing firmware or device"
+        return 1
+    fi
+    
+    # Wait for HCI interface
+    echo "Waiting for HCI interface..."
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
+            echo "✓ HCI interface appeared after ${i} seconds"
+            HCI_INTERFACE=$(ls /sys/class/bluetooth/ | head -1)
+            echo "Found HCI interface: $HCI_INTERFACE"
+            break
+        fi
+        echo "Waiting... ($i/15)"
+        sleep 1
+    done
+    
+    # Check HCI interfaces
+    echo "Available HCI interfaces:"
+    ls -la /sys/class/bluetooth/ 2>/dev/null || echo "No HCI interfaces found"
+    
+    # If no HCI interface after 15 seconds, continue anyway
+    if ! ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
+        echo "⚠ Warning: No HCI interface found, but continuing..."
+    fi
+    
+    # Start bluetoothd first (it will bring up the interface)
+    echo "Starting bluetoothd daemon..."
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile /var/run/bluetoothd.pid \
+        --exec /usr/libexec/bluetooth/bluetoothd -- -n -d > /tmp/bluetoothd.log 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo "✓ Bluetoothd started"
+        sleep 3
+        
+        # Check if process is running
+        if pgrep bluetoothd >/dev/null; then
+            echo "✓ Bluetoothd process confirmed running"
+        else
+            echo "✗ Bluetoothd process not found"
+            echo "Bluetoothd log:"
+            cat /tmp/bluetoothd.log
+        fi
+        
+        # Configure using bluetoothctl
+        echo "Configuring Bluetooth using bluetoothctl..."
+        {
+            echo "power on"
+            sleep 2
+            echo "agent on"
+            echo "default-agent"
+            echo "discoverable on"
+            echo "pairable on"
+            echo "quit"
+        } | bluetoothctl > /tmp/bluetooth_setup.log 2>&1
+        
+        echo "Bluetooth setup log:"
+        cat /tmp/bluetooth_setup.log
+        
+        # Start simple PIN agent
+        echo "Starting simple PIN agent..."
+        /usr/bin/simple-pin-agent &
+        
+        # Start auto-connect service
+        echo "Starting Bluetooth auto-connect service..."
+        /usr/bin/bluetooth-autoconnect &
+        
+        # Wait a bit for services to start
+        sleep 2
+        
+        # Try to connect to the target phone immediately
+        TARGET_PHONE="F4:21:CA:32:F4:54"
+        echo "Attempting initial connection to target phone: $TARGET_PHONE"
+        
+        # Use bluetoothctl to pair and connect
+        {
+            echo "scan on"
+            sleep 5
+            echo "scan off"
+            echo "pair $TARGET_PHONE"
+            sleep 3
+            echo "trust $TARGET_PHONE"
+            echo "connect $TARGET_PHONE"
+            sleep 2
+            echo "quit"
+        } | bluetoothctl > /tmp/bluetooth_connect.log 2>&1 &
+        
+        # Final status using bluetoothctl
+        echo "=== Final Bluetooth Status ==="
+        {
+            echo "show"
+            echo "devices"
+            echo "quit"
+        } | bluetoothctl > /tmp/bluetooth_status.log 2>&1
+        
+        echo "Bluetooth status:"
+        cat /tmp/bluetooth_status.log
+        
+        echo "Connection attempt logged to /tmp/bluetooth_connect.log"
+        echo "Auto-connect service running in background"
+        echo "=== End Debug ==="
+        
+    else
+        echo "✗ Failed to start bluetoothd"
+        return 1
+    fi
+}
+
+stop() {
+    printf 'Stopping Bluetooth: '
+    
+    # Kill agents and auto-connect service
+    killall simple-pin-agent 2>/dev/null
+    killall bluetooth-pin-agent 2>/dev/null
+    killall bluetooth-autoconnect 2>/dev/null
+    
+    # Stop bluetoothd
+    start-stop-daemon --stop --pidfile /var/run/bluetoothd.pid
+    
+    # Bring down HCI interface
+    /usr/bin/hciconfig hci0 down 2>/dev/null
+    
+    rm -f /var/run/bluetoothd.pid
+    echo "OK"
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

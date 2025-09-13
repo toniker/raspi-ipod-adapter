@@ -1,0 +1,45 @@
+#!/bin/sh
+
+# Auto-connect script for specific phone
+TARGET_PHONE="XX:XX:XX:XX:XX:XX"
+LOG_FILE="/tmp/bluetooth_autoconnect.log"
+
+echo "$(date): Starting Bluetooth auto-connect service for $TARGET_PHONE" >> $LOG_FILE
+
+# Wait for bluetoothd to be fully ready
+sleep 5
+
+while true; do
+    # Check if bluetoothd is running
+    if ! pgrep bluetoothd > /dev/null; then
+        echo "$(date): bluetoothd not running, waiting..." >> $LOG_FILE
+        sleep 10
+        continue
+    fi
+    
+    # Check if device is already connected
+    if bluetoothctl info "$TARGET_PHONE" 2>/dev/null | grep -q "Connected: yes"; then
+        echo "$(date): Device $TARGET_PHONE already connected" >> $LOG_FILE
+        sleep 30  # Check every 30 seconds when connected
+        continue
+    fi
+    
+    echo "$(date): Attempting to connect to $TARGET_PHONE" >> $LOG_FILE
+    
+    # Try to connect using bluetoothctl
+    {
+        echo "scan on"
+        sleep 3
+        echo "scan off"
+        echo "pair $TARGET_PHONE"
+        sleep 2
+        echo "trust $TARGET_PHONE"
+        sleep 1
+        echo "connect $TARGET_PHONE"
+        sleep 3
+        echo "quit"
+    } | bluetoothctl >> $LOG_FILE 2>&1
+    
+    # Wait before next attempt
+    sleep 20
+done

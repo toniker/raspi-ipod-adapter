@@ -1,0 +1,42 @@
+#!/bin/sh
+
+# Manual Bluetooth connection script
+TARGET_PHONE="F4:21:CA:32:F4:54"
+
+echo "=== Manual Bluetooth Connection Script ==="
+echo "Target device: $TARGET_PHONE"
+
+# Check if bluetoothd is running
+if ! pgrep bluetoothd > /dev/null; then
+    echo "Error: bluetoothd is not running!"
+    echo "Try: /etc/init.d/S98bluetootha2dp start"
+    exit 1
+fi
+
+# Check current Bluetooth status
+echo "Current Bluetooth status:"
+hciconfig -a 2>/dev/null || echo "hciconfig not available"
+
+echo ""
+echo "Current device info:"
+bluetoothctl info "$TARGET_PHONE" 2>/dev/null || echo "Device not known"
+
+echo ""
+echo "Attempting connection..."
+
+# Try to connect
+bluetoothctl << EOF
+scan on
+sleep 3
+scan off
+remove $TARGET_PHONE
+pair $TARGET_PHONE
+trust $TARGET_PHONE
+connect $TARGET_PHONE
+info $TARGET_PHONE
+quit
+EOF
+
+echo ""
+echo "Connection attempt complete. Check above output for results."
+echo "If pairing fails, make sure your phone is discoverable and try again."
