@@ -5,22 +5,22 @@ BRCM_PATCHRAM="/usr/bin/brcm_patchram_plus"
 BT_FIRMWARE="/lib/firmware/brcm/BCM43430A1.hcd"
 BT_DEVICE="/dev/ttyAMA0"
 
-#!/bin/sh
-
-DAEMON="bluetoothd"
-BRCM_PATCHRAM="/usr/bin/brcm_patchram_plus"
-BT_FIRMWARE="/lib/firmware/brcm/BCM43430A1.hcd"
-BT_DEVICE="/dev/ttyAMA0"
-
 start() {
-    echo "=== Starting Bluetooth Debug ==="
+    echo "=== Starting Bluetooth A2DP Sink ==="
+    
+    # Load required kernel modules
+    echo "Loading Bluetooth kernel modules..."
+    modprobe bluetooth 2>/dev/null || echo "bluetooth module already loaded or not available"
+    modprobe hci_uart 2>/dev/null || echo "hci_uart module already loaded or not available"
+    modprobe btbcm 2>/dev/null || echo "btbcm module already loaded or not available"
     
     # Check if tools exist
     echo "Checking tools..."
     [ -x "$BRCM_PATCHRAM" ] && echo "✓ brcm_patchram_plus found" || echo "✗ brcm_patchram_plus NOT found"
-    [ -x "/usr/bin/hciconfig" ] && echo "✓ hciconfig found" || echo "✗ hciconfig NOT found"
     [ -x "/usr/bin/bluetoothctl" ] && echo "✓ bluetoothctl found" || echo "✗ bluetoothctl NOT found"
     [ -x "/usr/libexec/bluetooth/bluetoothd" ] && echo "✓ bluetoothd found" || echo "✗ bluetoothd NOT found"
+    [ -x "/usr/bin/pulseaudio" ] && echo "✓ pulseaudio found" || echo "✗ pulseaudio NOT found"
+    [ -x "/usr/bin/pactl" ] && echo "✓ pactl found" || echo "✗ pactl NOT found"
     
     # Check firmware
     echo "Checking firmware..."
@@ -79,96 +79,332 @@ start() {
         
         echo "Patchram log:"
         cat /tmp/brcm_patchram.log
+        
+        # Additional debugging
+        echo "=== Debugging Info ==="
+        echo "Kernel modules:"
+        lsmod | grep -E "(bluetooth|hci|btusb)"
+        echo "USB devices:"
+        lsusb 2>/dev/null || echo "lsusb not available"
+        echo "TTY devices after patchram:"
+        ls -la /dev/tty* | grep -E "(AMA|USB|ACM)" | head -10
+        echo "Bluetooth class devices:"
+        ls -la /sys/class/bluetooth/ 2>/dev/null || echo "No bluetooth class devices"
     else
         echo "✗ Cannot load firmware - missing firmware or device"
         return 1
     fi
     
+    # Start PulseAudio first
+    echo "Starting PulseAudio..."
+    pulseaudio --system --disallow-exit --disallow-module-loading=false \
+        --log-target=file:/tmp/pulseaudio.log --log-level=info &
+    
+    sleep 3
+    
+    # Check if PulseAudio is running using ps instead of pgrep
+    if ps aux | grep -v grep | grep pulseaudio >/dev/null; then
+        echo "✓ PulseAudio started"
+    else
+        echo "✗ PulseAudio failed to start"
+        if [ -f /tmp/pulseaudio.log ]; then
+            echo "PulseAudio log:"
+            cat /tmp/pulseaudio.log
+        fi
+        return 1
+    fi
+    
     # Wait for HCI interface
     echo "Waiting for HCI interface..."
-    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    HCI_FOUND=0
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        # Check multiple ways for HCI interface
         if ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
             echo "✓ HCI interface appeared after ${i} seconds"
             HCI_INTERFACE=$(ls /sys/class/bluetooth/ | head -1)
             echo "Found HCI interface: $HCI_INTERFACE"
+            HCI_FOUND=1
+            break
+        elif [ -e /dev/hci0 ]; then
+            echo "✓ HCI device node found: /dev/hci0"
+            HCI_FOUND=1
+            break
+        elif hciconfig 2>/dev/null | grep -q "hci"; then
+            echo "✓ HCI interface detected via hciconfig"
+            HCI_FOUND=1
             break
         fi
-        echo "Waiting... ($i/15)"
+        
+        # Try to reset the interface every 5 seconds
+        if [ $((i % 5)) -eq 0 ]; then
+            echo "Attempting to reset Bluetooth interface..."
+            if kill -0 $PATCHRAM_PID 2>/dev/null; then
+                # Patchram still running, try to reset
+                hciconfig hci0 reset 2>/dev/null || true
+                sleep 1
+            else
+                echo "Warning: Patchram process died, restarting..."
+                $BRCM_PATCHRAM --enable_hci --use_baudrate_for_download \
+                    --tosleep 200000 --baudrate 921600 --patchram "$BT_FIRMWARE" \
+                    "$BT_DEVICE" > /tmp/brcm_patchram.log 2>&1 &
+                PATCHRAM_PID=$!
+            fi
+        fi
+        
+        echo "Waiting... ($i/20)"
         sleep 1
     done
     
-    # Check HCI interfaces
-    echo "Available HCI interfaces:"
-    ls -la /sys/class/bluetooth/ 2>/dev/null || echo "No HCI interfaces found"
-    
-    # If no HCI interface after 15 seconds, continue anyway
-    if ! ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
-        echo "⚠ Warning: No HCI interface found, but continuing..."
+    if [ $HCI_FOUND -eq 0 ]; then
+        echo "✗ HCI interface not found after 20 seconds"
+        echo "=== Final Debug Info ==="
+        echo "Patchram process status:"
+        if kill -0 $PATCHRAM_PID 2>/dev/null; then
+            echo "Patchram still running (PID: $PATCHRAM_PID)"
+        else
+            echo "Patchram process died"
+        fi
+        echo "Available interfaces:"
+        ls -la /sys/class/bluetooth/ 2>/dev/null || echo "No bluetooth interfaces"
+        ls -la /dev/hci* 2>/dev/null || echo "No HCI device nodes"
+        hciconfig 2>/dev/null || echo "hciconfig failed"
+        echo "Recent kernel messages:"
+        dmesg | tail -10
+        # Continue anyway, bluetoothd might still work
     fi
     
-    # Start bluetoothd first (it will bring up the interface)
+    # Start bluetoothd
     echo "Starting bluetoothd daemon..."
+    
+    # Check if bluetoothd is already running and stop it
+    if ps aux | grep -v grep | grep bluetoothd >/dev/null; then
+        echo "! Bluetoothd is already running - stopping existing process"
+        killall bluetoothd 2>/dev/null
+        sleep 2
+        # Also try the system stop
+        /etc/init.d/S40bluetoothd stop 2>/dev/null || true
+        sleep 1
+    fi
+    
+    # First try to bring up HCI interface manually if it exists
+    if hciconfig hci0 2>/dev/null; then
+        echo "Bringing up HCI interface..."
+        hciconfig hci0 up 2>/dev/null || echo "Failed to bring up hci0"
+    fi
+    
+    # Start bluetoothd with more permissive options
     start-stop-daemon --start --background --make-pidfile \
         --pidfile /var/run/bluetoothd.pid \
-        --exec /usr/libexec/bluetooth/bluetoothd -- -n -d > /tmp/bluetoothd.log 2>&1
+        --exec /usr/libexec/bluetooth/bluetoothd -- -n -d --noplugin=sap > /tmp/bluetoothd.log 2>&1
     
-    if [ $? -eq 0 ]; then
-        echo "✓ Bluetoothd started"
-        sleep 3
+    START_RESULT=$?
+    echo "start-stop-daemon exit code: $START_RESULT"
+    
+    if [ $START_RESULT -eq 0 ]; then
+        echo "✓ Bluetoothd start command executed successfully"
+        sleep 5
         
         # Check if process is running
-        if pgrep bluetoothd >/dev/null; then
+        if ps aux | grep -v grep | grep bluetoothd >/dev/null; then
             echo "✓ Bluetoothd process confirmed running"
         else
-            echo "✗ Bluetoothd process not found"
+            echo "✗ Bluetoothd process not found after successful start"
             echo "Bluetoothd log:"
             cat /tmp/bluetoothd.log
+            echo "Trying alternative bluetoothd startup..."
+            
+            # Try direct execution
+            /usr/libexec/bluetooth/bluetoothd -n -d --noplugin=sap > /tmp/bluetoothd_direct.log 2>&1 &
+            sleep 3
+            
+            if ps aux | grep -v grep | grep bluetoothd >/dev/null; then
+                echo "✓ Bluetoothd started via direct execution"
+            else
+                echo "✗ All bluetoothd startup methods failed"
+                echo "Direct execution log:"
+                cat /tmp/bluetoothd_direct.log 2>/dev/null
+                return 1
+            fi
+        fi
+    else
+        echo "✗ start-stop-daemon failed with code $START_RESULT"
+        echo "Bluetoothd log from failed start:"
+        cat /tmp/bluetoothd.log
+        
+        # Check if bluetoothd is already running
+        if ps aux | grep -v grep | grep bluetoothd >/dev/null; then
+            echo "! Bluetoothd is already running - killing existing process"
+            killall bluetoothd 2>/dev/null
+            sleep 2
         fi
         
-        # Configure using bluetoothctl
-        echo "Configuring Bluetooth using bluetoothctl..."
+        echo "Trying direct bluetoothd execution..."
+        /usr/libexec/bluetooth/bluetoothd -n -d --noplugin=sap > /tmp/bluetoothd_direct.log 2>&1 &
+        sleep 5
+        
+        if ps aux | grep -v grep | grep bluetoothd >/dev/null; then
+            echo "✓ Bluetoothd started via direct execution after failure"
+        else
+            echo "✗ All bluetoothd startup methods failed"
+            echo "Direct execution log:"
+            cat /tmp/bluetoothd_direct.log 2>/dev/null
+            return 1
+        fi
+    fi
+    
+    # Load PulseAudio Bluetooth modules
+    echo "Loading PulseAudio Bluetooth modules..."
+    
+    # Set up PulseAudio connection
+    PULSE_SERVER="unix:/run/pulse/native"
+    export PULSE_SERVER
+    
+    # Function to try different pactl connection methods
+    try_pactl() {
+        local cmd="$1"
+        local log_file="$2"
+        
+        # Try system daemon first
+        if pactl --server="$PULSE_SERVER" $cmd > "$log_file" 2>&1; then
+            return 0
+        # Try user session
+        elif pactl $cmd > "$log_file" 2>&1; then
+            return 0
+        else
+            echo "Failed to execute: pactl $cmd" >> "$log_file"
+            return 1
+        fi
+    }
+    
+    try_pactl "load-module module-bluetooth-policy" "/tmp/pa_bt_policy.log" || echo "Failed to load bluetooth-policy"
+    try_pactl "load-module module-bluetooth-discover" "/tmp/pa_bt_discover.log" || echo "Failed to load bluetooth-discover"
+    try_pactl "load-module module-bluez5-device" "/tmp/pa_bluez5.log" || echo "Failed to load bluez5-device"
+    try_pactl "load-module module-bluez5-discover" "/tmp/pa_bluez5_discover.log" || echo "Failed to load bluez5-discover"
+        
+        # Set default sink to auto_null (will switch to A2DP when connected)
+        try_pactl "set-default-sink auto_null" "/tmp/pa_sink.log" || echo "Failed to set default sink"
+        
+        # Configure Bluetooth controller using bluetoothctl
+        echo "Configuring Bluetooth controller..."
         {
             echo "power on"
-            sleep 2
-            echo "agent on"
-            echo "default-agent"
+            sleep 3
             echo "discoverable on"
             echo "pairable on"
+            echo "system-alias 'VOLVO Music'"
+            sleep 20
             echo "quit"
         } | bluetoothctl > /tmp/bluetooth_setup.log 2>&1
         
         echo "Bluetooth setup log:"
         cat /tmp/bluetooth_setup.log
         
-        # Start simple PIN agent
-        echo "Starting simple PIN agent..."
-        /usr/bin/simple-pin-agent &
+        # Create A2DP sink monitor script
+        cat > /usr/bin/a2dp-monitor << 'EOF'
+#!/bin/sh
+# A2DP Sink Monitor - automatically handles A2DP connections
+
+# Set up PulseAudio connection
+PULSE_SERVER="unix:/run/pulse/native"
+export PULSE_SERVER
+
+# Function to try different pactl connection methods
+try_pactl() {
+    local cmd="$1"
+    
+    # Try system daemon first
+    if pactl --server="$PULSE_SERVER" $cmd 2>/dev/null; then
+        return 0
+    # Try user session
+    elif pactl $cmd 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+while true; do
+    # Check for A2DP connections
+    CONNECTED_A2DP=$(try_pactl "list cards" | grep -A 20 "bluez_card" | grep "Active Profile:" | grep "a2dp_sink")
+    
+    if [ -n "$CONNECTED_A2DP" ]; then
+        # A2DP device connected, set as default sink
+        A2DP_SINK=$(try_pactl "list short sinks" | grep bluez | grep a2dp_sink | cut -f2)
+        if [ -n "$A2DP_SINK" ]; then
+            if try_pactl "set-default-sink $A2DP_SINK"; then
+                echo "$(date): Set A2DP sink as default: $A2DP_SINK" >> /tmp/a2dp_monitor.log
+            fi
+        fi
+    else
+        # No A2DP connection, set back to auto_null
+        try_pactl "set-default-sink auto_null"
+    fi
+    
+    sleep 5
+done
+EOF
         
-        # Start auto-connect service
-        echo "Starting Bluetooth auto-connect service..."
-        /usr/bin/bluetooth-autoconnect &
+        chmod +x /usr/bin/a2dp-monitor
+        
+        # Start A2DP monitor
+        echo "Starting A2DP monitor..."
+        /usr/bin/a2dp-monitor > /tmp/a2dp_monitor.log 2>&1 &
+        
+        # Create simple PIN configuration
+        echo "Creating PIN configuration..."
+        
+        # Configure bluetoothctl with KeyboardDisplay agent
+        {
+            echo "agent KeyboardDisplay"
+            echo "default-agent"
+            echo "quit"
+        } | bluetoothctl > /tmp/agent_setup.log 2>&1
+                
+        chmod +x /usr/bin/simple-pin-agent
+        # Start simple PIN agent
+        echo "Starting simple PIN agent (PIN: 5999)..."
+        /usr/bin/simple-pin-agent > /tmp/pin_agent.log 2>&1 &
+        
+        # Wait for agent to register
+        sleep 3
         
         # Wait a bit for services to start
-        sleep 2
+        sleep 3
         
-        # Try to connect to the target phone immediately
-        TARGET_PHONE="F4:21:CA:32:F4:54"
-        echo "Attempting initial connection to target phone: $TARGET_PHONE"
+        # Show current PulseAudio status
+        echo "=== PulseAudio Status ==="
+        # Connect to system PulseAudio daemon
+        PULSE_SERVER="unix:/run/pulse/native"
+        export PULSE_SERVER
         
-        # Use bluetoothctl to pair and connect
-        {
-            echo "scan on"
-            sleep 5
-            echo "scan off"
-            echo "pair $TARGET_PHONE"
-            sleep 3
-            echo "trust $TARGET_PHONE"
-            echo "connect $TARGET_PHONE"
-            sleep 2
-            echo "quit"
-        } | bluetoothctl > /tmp/bluetooth_connect.log 2>&1 &
+        # Check if system daemon is accessible
+        if pactl --server="$PULSE_SERVER" info >/dev/null 2>&1; then
+            echo "✓ System PulseAudio daemon accessible"
+            pactl --server="$PULSE_SERVER" info
+            echo "Available sinks:"
+            pactl --server="$PULSE_SERVER" list short sinks
+            echo "Available cards:"
+            pactl --server="$PULSE_SERVER" list short cards
+        else
+            echo "! System PulseAudio daemon not accessible, trying alternative methods..."
+            # Try connecting without server parameter (user session)
+            if pactl info >/dev/null 2>&1; then
+                echo "✓ User PulseAudio session accessible"
+                pactl info
+                echo "Available sinks:"
+                pactl list short sinks
+                echo "Available cards:"
+                pactl list short cards
+            else
+                echo "✗ No PulseAudio daemon accessible"
+                echo "PulseAudio daemon status:"
+                ps aux | grep pulseaudio | grep -v grep
+                echo "PulseAudio log:"
+                cat /tmp/pulseaudio.log 2>/dev/null || echo "No log available"
+            fi
+        fi
         
-        # Final status using bluetoothctl
+        # Final Bluetooth status
         echo "=== Final Bluetooth Status ==="
         {
             echo "show"
@@ -179,29 +415,34 @@ start() {
         echo "Bluetooth status:"
         cat /tmp/bluetooth_status.log
         
-        echo "Connection attempt logged to /tmp/bluetooth_connect.log"
-        echo "Auto-connect service running in background"
-        echo "=== End Debug ==="
-        
-    else
-        echo "✗ Failed to start bluetoothd"
-        return 1
-    fi
+        echo "✓ Bluetooth A2DP sink ready for connections"
+        echo "Device is discoverable and pairable"
+        echo "A2DP monitor running in background"
+        echo "=== End Setup ==="
 }
 
 stop() {
-    printf 'Stopping Bluetooth: '
+    printf 'Stopping Bluetooth A2DP Sink: '
     
-    # Kill agents and auto-connect service
+    # Kill custom services
+    killall a2dp-monitor 2>/dev/null
     killall simple-pin-agent 2>/dev/null
-    killall bluetooth-pin-agent 2>/dev/null
-    killall bluetooth-autoconnect 2>/dev/null
+    
+    # Unload PulseAudio Bluetooth modules
+    PULSE_SERVER="unix:/run/pulse/native"
+    export PULSE_SERVER
+    
+    # Try to unload modules with fallback
+    pactl --server="$PULSE_SERVER" unload-module module-bluetooth-policy 2>/dev/null || pactl unload-module module-bluetooth-policy 2>/dev/null
+    pactl --server="$PULSE_SERVER" unload-module module-bluetooth-discover 2>/dev/null || pactl unload-module module-bluetooth-discover 2>/dev/null
+    pactl --server="$PULSE_SERVER" unload-module module-bluez5-device 2>/dev/null || pactl unload-module module-bluez5-device 2>/dev/null
+    pactl --server="$PULSE_SERVER" unload-module module-bluez5-discover 2>/dev/null || pactl unload-module module-bluez5-discover 2>/dev/null
     
     # Stop bluetoothd
     start-stop-daemon --stop --pidfile /var/run/bluetoothd.pid
     
-    # Bring down HCI interface
-    /usr/bin/hciconfig hci0 down 2>/dev/null
+    # Stop PulseAudio
+    pulseaudio --kill 2>/dev/null
     
     rm -f /var/run/bluetoothd.pid
     echo "OK"
@@ -209,7 +450,7 @@ stop() {
 
 restart() {
     stop
-    sleep 2
+    sleep 3
     start
 }
 
