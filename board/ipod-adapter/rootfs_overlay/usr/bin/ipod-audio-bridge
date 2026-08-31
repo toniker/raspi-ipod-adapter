@@ -1,0 +1,54 @@
+#!/bin/sh
+# Supervised audio bridge: bluealsa A2DP sink PCM -> iPodUSB gadget card.
+#
+# Two independent 44.1 kHz clock domains meet here -- the phone's Bluetooth
+# stream and the car's USB isochronous clock -- so drift is guaranteed
+# (D5 in IPOD-ADAPTER.md). alsaloop's `--sync=samplerate` runs a libsamplerate
+# resampler whose ratio is nudged continuously to hold the loop delay
+# constant; that is the actual drift correction. The `pcm.bluealsa` config is
+# `type plug`, so a phone that negotiates SBC at 48 kHz is downconverted to
+# 44.1 before it reaches alsaloop.
+#
+# The bluealsa capture PCM only exists while a phone is connected AND
+# streaming. Rather than chase BlueZ connect/disconnect events, this just
+# retries: alsaloop exits when there is nothing to capture, we wait, we try
+# again. When audio is flowing alsaloop stays up.
+
+CAPTURE='bluealsa'                 # newest connected A2DP device (see 20-bluealsa.conf)
+PLAYBACK='hw:CARD=iPodUSB'         # fixed 44100/S16_LE/2ch, no plug needed
+RATE=44100
+CHANNELS=2
+FORMAT=S16_LE
+CONVERTER=1                        # libsamplerate: 0 best .. 4 linear; 1 = medium sinc
+SYNC_THRESH=      # frames; empty = alsaloop default
+BUFFER=          # capture/playback buffer in frames; empty = alsaloop default
+PERIOD=          # period in frames; empty = alsaloop default
+RETRY_SECONDS=3
+
+[ -r /etc/default/audio-bridge ] && . /etc/default/audio-bridge
+
+child=
+
+cleanup() {
+	[ -n "$child" ] && kill "$child" 2>/dev/null
+	exit 0
+}
+trap cleanup TERM INT
+
+while :; do
+	set -- -C "$CAPTURE" -P "$PLAYBACK" \
+		-r "$RATE" -c "$CHANNELS" -f "$FORMAT" \
+		--sync=samplerate --samplerate="$CONVERTER"
+	[ -n "$SYNC_THRESH" ] && set -- "$@" --sync-thres "$SYNC_THRESH"
+	[ -n "$BUFFER" ] && set -- "$@" -b "$BUFFER"
+	[ -n "$PERIOD" ] && set -- "$@" -p "$PERIOD"
+
+	alsaloop "$@" &
+	child=$!
+	wait "$child"
+	child=
+
+	# TERM/INT during wait() runs the trap and exits; reaching here means
+	# alsaloop itself exited (no stream, or the phone went away).
+	sleep "$RETRY_SECONDS"
+done

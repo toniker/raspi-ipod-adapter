@@ -17,10 +17,10 @@ phone --A2DP/AVRCP--> BlueZ --> bluealsa --> alsaloop --> ALSA "iPodUSB" --USB--
                         +--- media keys -----+
 ```
 
-This is the target architecture. The current image has the Bluetooth and
-bluealsa pieces, the `ipod-gadget` kernel modules, and the Go iAP client, all
-built into the image (not yet hardware-tested end to end). The `alsaloop`
-routing between the two clock domains is the remaining Phase 4 work.
+This is the target architecture. Every piece — Bluetooth/bluealsa, the
+`ipod-gadget` kernel modules, the Go iAP client, and the `alsaloop` bridge
+between the two clock domains — is now built into the image. None of it is
+hardware-tested end to end yet; that is the Phase 4 gate and needs the car.
 
 ---
 
@@ -196,12 +196,23 @@ The car is USB host and owns the isochronous clock; the phone's A2DP stream has
 its own. **Clock drift is guaranteed.** pipod never solved this cleanly — this is
 the one piece with no known-good answer handed to us.
 
-- [ ] `bluealsa` exposing the A2DP sink as an ALSA PCM
-- [ ] `alsaloop` from bluealsa PCM → `hw:CARD=iPodUSB`, with rate adaptation enabled
-- [ ] Tune buffer sizes against audible dropouts vs latency
-- [ ] Confirm sample rate alignment (SBC is 44.1 kHz; check what `g_ipod_audio` UAC1 advertises)
+- [x] `bluealsa` exposing the A2DP sink as an ALSA PCM — bluez-alsa 4.3.1 installs `libasound_module_pcm_bluealsa.so` and `/etc/alsa/conf.d/20-bluealsa.conf`, which defines `pcm.bluealsa` as a `type plug` wrapper over `type bluealsa` with default device `00:00:00:00:00:00` ("most recently connected"). `bluealsa -p a2dp-sink` already runs from `S45bt-audio`; nothing more to select.
+- [x] `alsaloop` from bluealsa PCM → `hw:CARD=iPodUSB`, with rate adaptation enabled — `/usr/bin/ipod-audio-bridge` runs `alsaloop -C bluealsa -P hw:CARD=iPodUSB --sync=samplerate` (libsamplerate; alsaloop is linked against `libsamplerate.so.0`, confirmed). `--sync=samplerate` continuously varies the resample ratio to hold the loop delay constant — the actual drift correction (D5). Supervised by a retry loop rather than chasing BlueZ connect/disconnect: alsaloop exits when there's no stream, we wait `RETRY_SECONDS`, retry. `S65audio-bridge` start/stops it (after `S60ipod`).
+- [ ] Tune buffer sizes against audible dropouts vs latency — **hardware-only.** Knobs (`CONVERTER`, `BUFFER`, `PERIOD`, `SYNC_THRESH`, `RETRY_SECONDS`) in `/etc/default/audio-bridge`; defaults are alsaloop's own with `CONVERTER=1` (SINC_MEDIUM).
+- [x] Confirm sample rate alignment — `g_ipod_audio`'s ALSA card is **fixed 44100 Hz / S16_LE / stereo** (`snd_pcm_hardware`: `rates = SNDRV_PCM_RATE_44100`, `rate_min = rate_max = 44100`, `channels_min = max = 2`, `formats = SNDRV_PCM_FMTBIT_S16_LE`). SBC A2DP defaults to 44100/16/2, so the common case is a pure clock-drift problem. A phone that negotiates SBC at 48 kHz is caught by the `type plug` on the capture side (static 48→44.1) before alsaloop's sync handles the residual drift. Playback uses `hw:` directly (no plug) since the params already match exactly.
 
-**Gate:** phone plays → car speakers. This is "project works".
+**Gate:** phone plays → car speakers. This is "project works". Everything
+build-side is in place; the gate itself needs the car (bluealsa capture PCM
+only exists while a phone streams, and the iPodUSB card only drains once the
+head unit is in iPod mode).
+
+New/changed files:
+`board/ipod-adapter/rootfs_overlay/usr/bin/ipod-audio-bridge`,
+`board/ipod-adapter/rootfs_overlay/etc/init.d/S65audio-bridge`,
+`board/ipod-adapter/rootfs_overlay/etc/default/audio-bridge`,
+`board/ipod-adapter/rootfs_overlay/etc/init.d/S45bt-audio` (comment only).
+No defconfig change — bluez-alsa, alsa-plugins/libsamplerate and alsaloop
+were already selected (Phase 1 / D11).
 
 ## Phase 5 — Metadata and controls
 

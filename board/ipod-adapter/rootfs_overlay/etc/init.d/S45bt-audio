@@ -6,9 +6,8 @@
 # and bluetoothd (S40) are already running by the time this runs; bluetoothd
 # itself powers the adapter on via main.conf's [Policy] AutoEnable.
 #
-# This intentionally does NOT start alsaloop: routing bluealsa's PCM to
-# the iPod USB gadget ALSA card is Phase 4 work (that card doesn't exist
-# until Phase 2's kernel modules are packaged).
+# This only starts bluealsa (the A2DP sink daemon). Routing its PCM into the
+# iPod USB gadget card is done separately by S65audio-bridge.
 
 BT_AGENT="/usr/bin/bt-agent"
 BT_AGENT_PIDFILE="/var/run/bt-agent.pid"

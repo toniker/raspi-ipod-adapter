@@ -1,0 +1,35 @@
+#!/bin/sh
+# Route Bluetooth A2DP audio into the iPod USB gadget card.
+#
+# Depends on: bluealsa (S45bt-audio) for the capture PCM, and the iPodUSB
+# ALSA card (S50ipod-gadget) for playback. The iAP client (S60ipod) is what
+# puts the head unit into iPod mode so it actually pulls the USB audio; until
+# then alsaloop just blocks on the playback device, which is harmless.
+#
+# The real work and all the tuning knobs are in /usr/bin/ipod-audio-bridge
+# and /etc/default/audio-bridge -- this is only start/stop.
+
+BRIDGE="/usr/bin/ipod-audio-bridge"
+PIDFILE="/var/run/ipod-audio-bridge.pid"
+
+start() {
+	printf 'Starting audio bridge (bluealsa -> iPodUSB): '
+	start-stop-daemon --start --background --make-pidfile \
+		--pidfile "$PIDFILE" --exec "$BRIDGE"
+	echo 'OK'
+}
+
+stop() {
+	printf 'Stopping audio bridge: '
+	# Signal the supervisor by PID; it traps TERM and kills its alsaloop child.
+	start-stop-daemon --stop --pidfile "$PIDFILE"
+	rm -f "$PIDFILE"
+	echo 'OK'
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

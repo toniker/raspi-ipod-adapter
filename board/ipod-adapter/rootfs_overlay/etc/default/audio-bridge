@@ -1,0 +1,32 @@
+# Tuning for /usr/bin/ipod-audio-bridge (the alsaloop bridge).
+#
+# This is Phase 4's tuning surface. The defaults are a starting point; the
+# real values come from listening in the car (IPOD-ADAPTER.md Phase 4:
+# "Tune buffer sizes against audible dropouts vs latency").
+
+# Capture: "bluealsa" resolves, via /etc/alsa/conf.d/20-bluealsa.conf, to the
+# most recently connected A2DP device. Playback: the gadget card, fixed
+# 44100/S16_LE/2ch.
+CAPTURE=bluealsa
+PLAYBACK=hw:CARD=iPodUSB
+
+RATE=44100
+CHANNELS=2
+FORMAT=S16_LE
+
+# libsamplerate converter for --sync=samplerate:
+#   0 = SINC_BEST, 1 = SINC_MEDIUM, 2 = SINC_FASTEST, 3 = ZERO_ORDER_HOLD, 4 = LINEAR
+# The Zero 2 W (4x A53) handles SINC_MEDIUM for 44.1k stereo comfortably.
+# Drop to 2 if CPU turns out to be tight; raising to 0 is rarely worth it.
+CONVERTER=1
+
+# alsaloop tuning. Empty = alsaloop's own defaults. Larger buffers tolerate
+# more drift and scheduling jitter at the cost of latency (fine for car
+# music). Try BUFFER around 0.1-0.5 s of frames (4410-22050) if you get
+# dropouts; keep PERIOD roughly BUFFER/4.
+BUFFER=
+PERIOD=
+SYNC_THRESH=
+
+# Seconds between reconnect attempts when no phone is streaming.
+RETRY_SECONDS=3
