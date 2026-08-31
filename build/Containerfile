@@ -1,0 +1,60 @@
+# Buildroot build environment for the ipod-adapter image.
+#
+# Built and run with Apple's `container` runtime -- see build/README.md.
+#
+# ARCHITECTURE NOTE -- this image is deliberately NOT pinned to a platform.
+#
+# It runs native: aarch64 on an Apple Silicon Mac, x86_64 on an Intel box or a
+# Linux CI runner. That is possible because the defconfig uses a Buildroot-built
+# internal toolchain rather than Bootlin's prebuilt one, which is gated on
+# `BR2_HOSTARCH = "x86_64"` and so can never be selected on an arm64 host.
+#
+# Do not pin this to linux/amd64. Apple's container runtime is arm64-native;
+# x86_64 images would run under Rosetta, which is punishing for a workload that
+# is almost entirely compilation.
+FROM debian:bookworm-slim
+
+# Buildroot's mandatory + recommended host dependencies.
+# See docs/manual/prerequisite.adoc in this repo for the canonical list.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        bc \
+        binutils \
+        build-essential \
+        bzip2 \
+        ca-certificates \
+        cpio \
+        diffutils \
+        file \
+        findutils \
+        gawk \
+        git \
+        gzip \
+        libncurses-dev \
+        locales \
+        patch \
+        perl \
+        python3 \
+        rsync \
+        sed \
+        tar \
+        unzip \
+        wget \
+        which \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Buildroot warns and misbehaves under a non-UTF-8 locale.
+RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+# Buildroot refuses to run as root, by design -- it would let a package's
+# install step write outside the output directory. Create a normal user whose
+# uid/gid can be overridden at build time to match the host, so files created
+# in the bind-mounted source tree stay owned by you.
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g "$GID" br 2>/dev/null || true && \
+    useradd -m -u "$UID" -g "$GID" -s /bin/bash br 2>/dev/null || true
+USER br
+
+WORKDIR /src

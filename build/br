@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# Apple `container` wrapper for building the ipod-adapter image.
+#
+#   ./build/br setup            create volumes and build the container image
+#   ./build/br defconfig        apply configs/ipod_adapter_defconfig
+#   ./build/br make [args...]   run make in the build environment
+#   ./build/br shell [-c ...]   shell in the build environment
+#   ./build/br images           copy build artifacts out to ./images/
+#   ./build/br clean            reset the output volume (keeps the download cache)
+#
+# Typical first run:
+#   ./build/br setup && ./build/br defconfig && ./build/br make
+#
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="ipod-adapter-build"
+DEFCONFIG="ipod_adapter_defconfig"
+
+# Apple's container runtime gives each container its own lightweight VM, so
+# resources are allocated per-run rather than by sizing one global machine.
+# Defaults leave 2 cores and 8 GB for macOS on a 10-core / 16 GB M1 Pro.
+CPUS="${BR_CPUS:-8}"
+MEMORY="${BR_MEMORY:-8g}"
+
+# Buildroot does an enormous amount of small-file I/O. The repo is shared into
+# the VM over virtiofs, which is much slower than a native filesystem, so the
+# output tree and download cache live in volumes instead of on the bind mount.
+# The tradeoff is that artifacts need `br images` to come back out.
+OUT_VOL="ipod-adapter-output"
+OUT_SIZE="60G"
+DL_VOL="ipod-adapter-dl"
+DL_SIZE="20G"
+
+# Volumes are created root-owned; Buildroot refuses to run as root, so the
+# build user needs ownership of both. Done once in `setup`.
+BUILD_USER="br"
+
+run() {
+    # -it only when stdin is really a terminal, so the wrapper stays usable
+    # from scripts and CI. Written without arrays: macOS ships bash 3.2,
+    # where an empty array expansion trips `set -u`.
+    local tty=""
+    [ -t 0 ] && tty="-it"
+    # shellcheck disable=SC2086  # $tty is intentionally word-split
+    container run --rm $tty \
+        --cpus "$CPUS" --memory "$MEMORY" \
+        -v "$REPO_ROOT:/src" \
+        -v "$OUT_VOL:/output" \
+        -v "$DL_VOL:/dl" \
+        -e BR2_DL_DIR=/dl \
+        -w /src \
+        -u "$BUILD_USER" \
+        "$IMAGE" "$@"
+}
+
+case "${1:-}" in
+setup)
+    container volume create -s "$OUT_SIZE" "$OUT_VOL" 2>/dev/null || true
+    container volume create -s "$DL_SIZE" "$DL_VOL" 2>/dev/null || true
+
+    # Match the container user to the host user so anything written back into
+    # the bind-mounted source tree keeps sane ownership.
+    container build \
+        --cpus "$CPUS" --memory "$MEMORY" \
+        --build-arg "UID=$(id -u)" \
+        --build-arg "GID=$(id -g)" \
+        -t "$IMAGE" \
+        -f "$REPO_ROOT/build/Containerfile" \
+        "$REPO_ROOT"
+
+    # Hand the fresh volumes to the build user (they start out root-owned).
+    # -u root overrides the image's USER br; the volumes start out root-owned
+    # and only root can hand them over.
+    container run --rm -u root \
+        -v "$OUT_VOL:/output" -v "$DL_VOL:/dl" \
+        "$IMAGE" \
+        sh -c "chown $(id -u):$(id -g) /output /dl"
+    echo "Setup complete. Next: ./build/br defconfig"
+    ;;
+defconfig)
+    run make O=/output "$DEFCONFIG"
+    ;;
+make)
+    shift
+    run make O=/output "$@"
+    ;;
+shell)
+    # No args gives an interactive shell; with args it runs them, e.g.
+    #   ./build/br shell -c 'grep BR2_PACKAGE_BLUEZ_ALSA /output/.config'
+    shift
+    run bash "$@"
+    ;;
+images)
+    mkdir -p "$REPO_ROOT/images"
+    # Copy through the bind mount rather than `container cp`, which needs a
+    # container rather than a volume as its source.
+    run sh -c 'cp -a /output/images/. /src/images/'
+    echo "Artifacts copied to $REPO_ROOT/images/"
+    ls -lh "$REPO_ROOT/images/"
+    ;;
+clean)
+    # Deliberately does NOT remove $DL_VOL -- that cache is gigabytes of
+    # upstream tarballs and re-downloading it is pure waste.
+    container volume delete "$OUT_VOL"
+    container volume create -s "$OUT_SIZE" "$OUT_VOL"
+    container run --rm -u root -v "$OUT_VOL:/output" "$IMAGE" \
+        sh -c "chown $(id -u):$(id -g) /output"
+    echo "Output volume reset. Download cache ($DL_VOL) kept."
+    ;;
+*)
+    sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 1
+    ;;
+esac
