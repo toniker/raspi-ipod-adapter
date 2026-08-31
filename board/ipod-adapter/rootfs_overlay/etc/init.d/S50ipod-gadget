@@ -1,0 +1,64 @@
+#!/bin/sh
+# Load the ipod-gadget kernel modules so the board enumerates to the car head
+# unit as an iPod: a USB Audio Class 1 card ("iPodUSB") plus a HID interface
+# carrying iAP on /dev/iap0.
+#
+# There is no module autoloader in this appliance (devtmpfs only, no udev/mdev
+# -- see D12), and the three modules have NO symbol dependency on each other:
+# g_ipod_gadget finds the audio/hid functions by name at runtime via
+# usb_get_function_instance(), which only works if those modules registered
+# first. So the load order is explicit and load-bearing:
+#     g_ipod_audio -> g_ipod_hid -> g_ipod_gadget
+# (libcomposite, dwc2 and usb_f_mass_storage are built into the kernel.)
+#
+# The USB gadget is not actually activated here -- it binds to the UDC when
+# something opens /dev/iap0, which is the Phase 3 iAP client's job. This
+# script just makes the modules and device node present.
+#
+# Module parameters (only_ipod / swap_configs / product_id / disable_audio)
+# are car-specific tuning; set them in /etc/default/ipod-gadget.
+
+MODULES='g_ipod_audio g_ipod_hid g_ipod_gadget'
+GADGET_ARGS=''
+
+[ -r /etc/default/ipod-gadget ] && . /etc/default/ipod-gadget
+
+start() {
+	printf 'Loading ipod-gadget modules: '
+	for m in $MODULES; do
+		args=''
+		[ "$m" = g_ipod_gadget ] && args="$GADGET_ARGS"
+		if ! modprobe "$m" $args; then
+			echo "FAILED ($m)"
+			return 1
+		fi
+	done
+
+	# device_create() -> devtmpfs makes /dev/iap0 appear; normally immediate.
+	i=0
+	while [ ! -e /dev/iap0 ] && [ "$i" -lt 20 ]; do
+		usleep 100000
+		i=$((i + 1))
+	done
+
+	if [ -e /dev/iap0 ]; then
+		echo 'OK'
+	else
+		echo 'FAILED (/dev/iap0 did not appear)'
+		return 1
+	fi
+}
+
+stop() {
+	# Reverse order; ignore errors (gadget may be busy if the car holds it).
+	modprobe -r g_ipod_gadget 2>/dev/null
+	modprobe -r g_ipod_hid 2>/dev/null
+	modprobe -r g_ipod_audio 2>/dev/null
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

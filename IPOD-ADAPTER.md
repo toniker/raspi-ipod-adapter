@@ -134,11 +134,40 @@ two hashes cannot drift.
 
 ## Phase 2 — Package the gadget kernel modules
 
-- [ ] `package/ipod-gadget/` using Buildroot's `kernel-module` infra, built against the pinned RPi kernel tree
-- [ ] Pin to a specific upstream commit + hash (`BR2_DOWNLOAD_FORCE_CHECK_HASHES=y` is already on)
+- [x] `package/ipod-gadget/` using Buildroot's `kernel-module` infra, built against the pinned RPi kernel tree
+- [x] Pin to a specific upstream commit + hash (`BR2_DOWNLOAD_FORCE_CHECK_HASHES=y` is already on) — pinned to `ece6b7b0` (oandrew/ipod-gadget master, 2025-08-15), the commit that *is* the "hid_descriptor.rpt_desc on >= 6.12.34" fix. sha256 in `ipod-gadget.hash`, locally computed.
 - [x] Verify against our kernel version — **our kernel is 6.12.41** (raspberrypi/linux@`ac69f097`). That is **≥ 6.12.34**, so the upstream "Use hid_descriptor.rpt_desc on >= 6.12.34" commit (Aug 2025) **is required** — pin to current master, not an older commit.
-- [ ] Init script: modprobe order is `g_ipod_audio` → `g_ipod_hid` → `g_ipod_gadget`
-- [ ] Carry over any module params that proved necessary in Phase 0 (`only_ipod`, `swap_configs`, `product_id`)
+- [x] Init script: modprobe order is `g_ipod_audio` → `g_ipod_hid` → `g_ipod_gadget` — `board/ipod-adapter/rootfs_overlay/etc/init.d/S50ipod-gadget`. Order is load-bearing: the three modules have no inter-module symbol dependency (g_ipod_gadget resolves the audio/hid functions by *name* at runtime), and there is no module autoloader, so `modprobe g_ipod_gadget` alone would not pull the other two.
+- [x] Carry over any module params that proved necessary in Phase 0 (`only_ipod`, `swap_configs`, `product_id`) — Phase 0 streamed audio with **stock params**, so the default is empty. Knobs exposed via `/etc/default/ipod-gadget` (`GADGET_ARGS=`), passed only to `g_ipod_gadget`.
+
+**Build-verified** (`./build/br make`, exit 0):
+
+- All three modules compile against 6.12.41 and install to the initramfs at
+  `/lib/modules/6.12.41-v7/updates/{g_ipod_audio,g_ipod_hid,g_ipod_gadget}.ko.xz`.
+  `vermagic` matches the kernel exactly. zImage 34M → 35M.
+- `IPOD_GADGET_LINUX_CONFIG_FIXUPS` resolved as expected: `CONFIG_SND` /
+  `CONFIG_SND_PCM` stay `=m` (olddefconfig keeps them modular — their
+  selectors are `=m`), which is fine because the init script uses `modprobe`,
+  not `insmod`. `depmod` recorded `g_ipod_audio → snd-pcm, snd-timer, snd`,
+  and those modules are present in the image, so `modprobe g_ipod_audio`
+  pulls the ALSA core automatically. `USB_CONFIGFS` / `USB_CONFIGFS_MASS_STORAGE`
+  / `USB_F_MASS_STORAGE` / gadget symbols are all `=y` (built-in).
+- `g_ipod_gadget.ko` and `g_ipod_hid.ko` have an **empty** `depends:` line —
+  confirms the load order in `S50ipod-gadget` is genuinely required; nothing
+  chains them.
+- `modinfo` exposes `only_ipod` / `disable_audio` / `swap_configs` /
+  `product_id`; `/etc/default/ipod-gadget` and `S50ipod-gadget` are in the
+  image.
+
+Still hardware-only: does the 2005 S40 actually enumerate the gadget and does
+`/dev/iap0` behave (that needs the Phase 3 client to open it).
+
+New/changed files:
+`package/ipod-gadget/{Config.in,ipod-gadget.mk,ipod-gadget.hash}`,
+`package/Config.in` (menu entry),
+`configs/ipod_adapter_defconfig` (`BR2_PACKAGE_IPOD_GADGET=y`),
+`board/ipod-adapter/rootfs_overlay/etc/init.d/S50ipod-gadget`,
+`board/ipod-adapter/rootfs_overlay/etc/default/ipod-gadget`.
 
 ## Phase 3 — Package the iAP client
 

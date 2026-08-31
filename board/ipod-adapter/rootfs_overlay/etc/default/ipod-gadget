@@ -1,0 +1,18 @@
+# Parameters passed to `modprobe g_ipod_gadget` by /etc/init.d/S50ipod-gadget.
+#
+# Phase 0 proved audio streaming to the 2005 Volvo S40 head unit with the
+# stock parameters (no overrides), so the default here is empty. These are
+# the knobs to reach for if a different head unit misbehaves:
+#
+#   only_ipod=1     Drop the secondary mass-storage USB config; present only
+#                   the iPod config. Use if the head unit latches onto the
+#                   storage config and never probes the iPod one.
+#   swap_configs=1  Reorder so the iPod config is #1 (some docks only look at
+#                   the first config).
+#   product_id=0x1297   Advertise a different Apple model
+#                       (see oandrew/ipod-gadget doc/apple-usb.ids).
+#   disable_audio=1 HID/iAP only, no UAC1 interface. Diagnostic use.
+#
+# Example:
+#GADGET_ARGS='only_ipod=1 swap_configs=1'
+GADGET_ARGS=''

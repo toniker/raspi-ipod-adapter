@@ -1,0 +1,21 @@
+config BR2_PACKAGE_IPOD_GADGET
+	bool "ipod-gadget"
+	depends on BR2_LINUX_KERNEL
+	help
+	  Out-of-tree Linux USB gadget kernel modules that make the board
+	  enumerate to a host (a car head unit, a dock) as an Apple iPod:
+	  a USB Audio Class 1 streaming interface plus a HID interface that
+	  carries iAP (iPod Accessory Protocol) packets on a /dev/iap0
+	  character device.
+
+	  Builds three modules, loaded in this order:
+	    g_ipod_audio  - creates the "iPodUSB" ALSA playback card
+	    g_ipod_hid    - HID transport for iAP
+	    g_ipod_gadget - the composite device tying them together
+
+	  The matching userspace iAP client is the separate "ipod" package.
+
+	  https://github.com/oandrew/ipod-gadget
+
+comment "ipod-gadget needs a Linux kernel to be built"
+	depends on !BR2_LINUX_KERNEL

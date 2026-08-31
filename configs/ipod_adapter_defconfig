@@ -70,6 +70,11 @@ BR2_PACKAGE_ALSA_UTILS_ALSALOOP=y
 BR2_PACKAGE_ALSA_PLUGINS=y
 # Lightweight pairing agent (bt-agent); no python3/dbus-python/pygobject
 BR2_PACKAGE_BLUEZ_TOOLS=y
+# iPod-over-USB gadget kernel modules (g_ipod_audio / g_ipod_hid /
+# g_ipod_gadget). Built against the pinned RPi kernel; creates the "iPodUSB"
+# ALSA card and /dev/iap0. The USB gadget kernel symbols it needs are in
+# board/ipod-adapter/linux-usb-gadget.fragment; the package adds CONFIG_SND*.
+BR2_PACKAGE_IPOD_GADGET=y
 # Initramfs rootfs (D2): embedded in the kernel image, nothing on disk
 BR2_TARGET_ROOTFS_INITRAMFS=y
 # BR2_TARGET_ROOTFS_TAR is not set
