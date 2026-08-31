@@ -161,7 +161,9 @@ two hashes cannot drift.
   image.
 
 Still hardware-only: does the 2005 S40 actually enumerate the gadget and does
-`/dev/iap0` behave (that needs the Phase 3 client to open it).
+`/dev/iap0` behave (that needs the Phase 3 client to open it). A generic Linux
+USB host does *not* enumerate this gadget cleanly — see **Known issues** — but
+that is expected not to affect the S40.
 
 New/changed files:
 `package/ipod-gadget/{Config.in,ipod-gadget.mk,ipod-gadget.hash}`,
@@ -232,6 +234,50 @@ Everything above is audio-only.
 - [ ] Physical install: cable, mounting, power
 
 ---
+
+## Known issues
+
+### The gadget crashes a generic Linux USB host during enumeration
+
+Found while prototyping a QEMU harness (booting the real image under
+`qemu-system-arm -M virt` with `dummy_hcd` as a virtual UDC+HCD, so the gadget
+would enumerate back into the same kernel). The harness was abandoned, but the
+finding stands.
+
+The moment `ipod serve` opens `/dev/iap0` — which calls `usb_function_activate()`
+and pulls the gadget up — a generic Linux `usbcore` host enumerating it hits:
+
+```
+usb 1-1: config 2 has 1 interface, different from the descriptor's value: 3
+usb 1-1: config 2 has no interface number 0
+Unable to handle kernel NULL pointer dereference ...
+PC is at composite_setup+0xef4
+Call trace: composite_setup from dummy_timer [dummy_hcd]
+Kernel panic - not syncing: Fatal exception in interrupt
+```
+
+The config descriptor advertises `bNumInterfaces = 3` (audio control + audio
+streaming + HID) but `cdev->config->interface[0]` comes back NULL, so the
+first control transfer addressed to interface 0 dereferences NULL inside
+`composite_setup`. This reproduced on 6.12.41 with `only_ipod=1` (single
+config) as well, so it is not a multi-config config-selection problem — the
+iPod config's own interface table is malformed as standard `usbcore` parses
+it. `ipod_audio.c` *does* allocate its interface numbers with
+`usb_interface_id()`, so the bug is subtler than a hardcoded `bInterfaceNumber`.
+
+**Assessment:** almost certainly **not a blocker for the 2005 S40**. Phase 0
+streamed audio to that head unit for real; its iPod host logic does not run
+the standard `GET_DESCRIPTOR` / `SET_INTERFACE` sequence that trips this. The
+crash is specific to a general-purpose USB host stack.
+
+**When it would matter:** a newer or pickier head unit that enumerates the
+device more by-the-book. If a car refuses to see the iPod, or enumerates it
+as mass storage / not at all, this descriptor bug is the first suspect —
+possibly the same class of problem as
+[ipod-gadget#24](https://github.com/oandrew/ipod-gadget/issues/24) (Volvo V70
+2015, never worked). The fix would live in `ipod_audio.c` / `ipod.h`
+descriptor construction, upstream or as a local patch in
+`package/ipod-gadget/`.
 
 ## Open questions
 
