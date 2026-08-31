@@ -1,0 +1,35 @@
+#!/bin/sh
+# Bring up the onboard BCM43438 Bluetooth controller before bluetoothd.
+#
+# The hci_uart driver is not autoloaded in this appliance: there is no udev or
+# mdev instance to act on the brcm,bcm43438-bt device-tree modalias. Loading it
+# explicitly binds the enabled serdev child (serial0-0), uploads the board
+# firmware, and creates hci0. This must complete before S40bluetoothd starts.
+
+start() {
+	printf 'Loading BCM43438 Bluetooth controller: '
+	if ! modprobe hci_uart; then
+		echo 'FAILED'
+		return 1
+	fi
+
+	# Firmware upload normally takes less than a second. Keep a bounded wait so
+	# a missing controller is reported at boot rather than failing silently.
+	i=0
+	while [ ! -e /sys/class/bluetooth/hci0 ] && [ "$i" -lt 20 ]; do
+		usleep 100000
+		i=$((i + 1))
+	done
+
+	if [ -e /sys/class/bluetooth/hci0 ]; then
+		echo 'OK'
+	else
+		echo 'FAILED (hci0 did not appear)'
+		return 1
+	fi
+}
+
+case "$1" in
+	start) start ;;
+	*) exit 0 ;;
+esac

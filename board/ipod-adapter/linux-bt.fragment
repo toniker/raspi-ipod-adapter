@@ -1,0 +1,43 @@
+# Bluetooth stack, built IN rather than as modules.
+#
+# CONFIG_RFKILL=y is load-bearing and must come first in spirit: the kernel
+# declares
+#     config BT
+#         tristate ...
+#         depends on RFKILL || !RFKILL
+# and the RPi bcm2709 defconfig ships CONFIG_RFKILL=m. A =y symbol cannot
+# depend on an =m one, so with RFKILL=m kconfig silently clamps CONFIG_BT back
+# to m -- merge_config.sh applies our =y, then `olddefconfig` reverts it, and
+# the only trace is a "Value of CONFIG_BT is redefined" line buried in the
+# build log.
+#
+# That clamp is not cosmetic. This image uses
+# BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS (devtmpfs only -- no mdev, no
+# udev), so there is NO module autoloader, and D7 deliberately removed the
+# manual modprobe/brcm_patchram_plus path. Modular Bluetooth would therefore
+# never be loaded at all: hci0 would never appear, S45bt-audio's wait loop
+# would time out, and bluetoothd would sit there with no controller -- looking
+# exactly like the "HCI interface not found" symptom this board config exists
+# to fix.
+#
+# Keeping the stack built-in also avoids modprobe latency at boot, which the
+# boot budget in IPOD-ADAPTER.md cares about.
+CONFIG_RFKILL=y
+CONFIG_BT=y
+CONFIG_BT_RFCOMM=y
+CONFIG_BT_RFCOMM_TTY=y
+CONFIG_BT_BNEP=y
+CONFIG_BT_BNEP_MC_FILTER=y
+CONFIG_BT_BNEP_PROTO_FILTER=y
+CONFIG_BT_HIDP=y
+CONFIG_BT_HCIBTUSB=y
+CONFIG_BT_HCIUART=y
+CONFIG_BT_HCIUART_H4=y
+CONFIG_BT_HCIUART_SERDEV=y
+CONFIG_BT_HCIUART_BCM=y
+CONFIG_BT_BCM=y
+
+# Virtual HCI controller, for testing the userspace stack under QEMU where no
+# real BCM43438 exists. Harmless on the target: it instantiates nothing unless
+# something opens /dev/vhci.
+CONFIG_BT_HCIVHCI=y

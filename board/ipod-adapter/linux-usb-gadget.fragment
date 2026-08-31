@@ -1,0 +1,13 @@
+# USB gadget support for the iPod-over-USB composite device.
+#
+# The ipod-gadget kernel modules (packaged in Phase 2, see IPOD-ADAPTER.md)
+# are built against these. DWC2 is the Pi Zero 2 W's OTG USB controller;
+# it's built peripheral-only (not dual-role/host) since this port is only
+# ever a device plugged into the car head unit, never a USB host -- see
+# config.txt's "dtoverlay=dwc2".
+CONFIG_USB_GADGET=y
+CONFIG_USB_DWC2=y
+CONFIG_USB_DWC2_PERIPHERAL=y
+CONFIG_USB_LIBCOMPOSITE=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_F_MASS_STORAGE=y

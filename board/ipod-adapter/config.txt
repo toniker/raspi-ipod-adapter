@@ -1,0 +1,44 @@
+# ipod-adapter board config.txt -- Raspberry Pi Zero 2 W
+#
+# Based on Buildroot's raspberrypi sample config.txt. See
+# http://elinux.org/RPiconfig for a description of config.txt syntax.
+
+start_file=start.elf
+fixup_file=fixup.dat
+
+kernel=zImage
+
+# The rootfs is an initramfs embedded in zImage itself (D2) -- there is no
+# separate "initramfs ..." line here and nothing else to load.
+
+# Headless appliance: no display is ever attached, keep GPU memory minimal.
+gpu_mem_256=16
+gpu_mem_512=16
+gpu_mem_1024=16
+
+# Bluetooth deliberately stays on the full PL011 UART (ttyAMA0), which is
+# the SoC default -- we do NOT use dtoverlay=miniuart-bt here.
+#
+# The old raspberrypi0w config did use that overlay, which moves BT onto
+# the mini-UART. The mini-UART has no clock of its own (its baud rate is
+# derived from the ARM core clock), so that arrangement forces core_freq
+# to be pinned or cpufreq scaling corrupts the BT firmware upload and HCI
+# traffic -- a well-known cause of the exact "HCI interface not found"
+# symptom the old S98bluetootha2dp kept hitting.
+#
+# For a headless car appliance, Bluetooth is the critical path and no
+# serial console is needed in production, so BT gets the better UART and
+# we accept losing ttyAMA0 as a console.
+
+# Serial console on the mini-UART (ttyS0), for bring-up only.
+#
+# NOTE: enable_uart=1 pins the core clock on this SoC for exactly the
+# reason described above -- now for the console's benefit rather than
+# Bluetooth's. That costs a little performance and is harmless for this
+# workload, but it should be REMOVED for the Phase 6 production image,
+# where there is no console at all.
+enable_uart=1
+
+# USB OTG/peripheral mode on the micro-B "USB" port (not "PWR IN"), used
+# by the ipod-gadget composite device in Phase 2.
+dtoverlay=dwc2

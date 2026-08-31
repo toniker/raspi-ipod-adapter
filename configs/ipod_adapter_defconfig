@@ -1,0 +1,80 @@
+BR2_arm=y
+BR2_cortex_a53=y
+BR2_ARM_FPU_NEON_VFPV4=y
+# Buildroot-built (internal) toolchain rather than Bootlin's prebuilt one.
+#
+# toolchain-external-bootlin/Config.in gates Bootlin on:
+#     depends on BR2_HOSTARCH = "x86_64"
+# because Bootlin ships x86_64 host binaries only. The build host here is an
+# Apple Silicon Mac, so the build container's Linux VM is aarch64 and that
+# dependency can never be met -- kconfig would silently drop the selection.
+#
+# Building our own toolchain keeps the container native (no x86 emulation,
+# which would mean every compiler invocation running under Rosetta) and makes
+# the build host-architecture independent. Costs ~20-40 min on the first build
+# only; see build/README.md.
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+# Kernel headers track the RPi kernel we actually build (6.12.41). The series
+# must be stated explicitly because BR2_LINUX_KERNEL_CUSTOM_TARBALL gives
+# kconfig no version to infer from.
+BR2_KERNEL_HEADERS_AS_KERNEL=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_12=y
+BR2_GLOBAL_PATCH_DIR="board/ipod-adapter/patches"
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+BR2_ROOTFS_OVERLAY="board/ipod-adapter/rootfs_overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="board/ipod-adapter/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="board/ipod-adapter/post-image.sh"
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,ac69f097e1fba94502cbd36278db204120a37943)/linux-ac69f097e1fba94502cbd36278db204120a37943.tar.gz"
+BR2_LINUX_KERNEL_DEFCONFIG="bcm2709"
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2710-rpi-zero-2-w"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="board/ipod-adapter/linux-bt.fragment board/ipod-adapter/linux-usb-gadget.fragment"
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
+BR2_PACKAGE_XZ=y
+BR2_PACKAGE_RPI_FIRMWARE=y
+BR2_PACKAGE_RPI_FIRMWARE_BOOTCODE_BIN=y
+BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI=y
+BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE="board/ipod-adapter/config.txt"
+# Override the "legacy" default of board/raspberrypi/cmdline.txt, which sets
+# root=/dev/mmcblk0p2 -- under our layout that partition is the tiny
+# bluetooth-data partition (D3), not a rootfs, and no root= is needed at all
+# since the kernel boots straight into the embedded initramfs (D2).
+BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE="board/ipod-adapter/cmdline.txt"
+BR2_PACKAGE_KMOD=y
+BR2_PACKAGE_KMOD_TOOLS=y
+# Bluetooth firmware. In-kernel btbcm/hci_uart binds via the DT bluetooth
+# node (D7) -- no brcm_patchram_plus. Same BCM43438/BCM43430A1 chip as the
+# Zero W, so the same BCM43430A1.hcd firmware applies (see IPOD-ADAPTER.md
+# open questions).
+BR2_PACKAGE_BRCMFMAC_SDIO_FIRMWARE_RPI=y
+BR2_PACKAGE_BRCMFMAC_SDIO_FIRMWARE_RPI_BT=y
+# BlueZ5 stack
+BR2_PACKAGE_BLUEZ5_UTILS=y
+BR2_PACKAGE_BLUEZ5_UTILS_CLIENT=y
+BR2_PACKAGE_BLUEZ5_UTILS_TOOLS=y
+BR2_PACKAGE_BLUEZ5_UTILS_DEPRECATED=y
+BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_AUDIO=y
+# A2DP sink audio path (D5): bluez-alsa + alsaloop, no PulseAudio anywhere
+BR2_PACKAGE_BLUEZ_ALSA=y
+BR2_PACKAGE_ALSA_UTILS=y
+BR2_PACKAGE_ALSA_UTILS_ALSALOOP=y
+# alsa-plugins is what pulls in libsamplerate: bluez-alsa only selects it
+# "if BR2_PACKAGE_ALSA_PLUGINS", and its own Config.in says the samplerate
+# plugin "is needed for proper sample rate conversion with Bluetooth
+# devices". Phase 4 has to reconcile the phone's A2DP clock with the car's
+# USB-host isochronous clock, so we want the good resampler available
+# before that debugging starts, not after.
+BR2_PACKAGE_ALSA_PLUGINS=y
+# Lightweight pairing agent (bt-agent); no python3/dbus-python/pygobject
+BR2_PACKAGE_BLUEZ_TOOLS=y
+# Initramfs rootfs (D2): embedded in the kernel image, nothing on disk
+BR2_TARGET_ROOTFS_INITRAMFS=y
+# BR2_TARGET_ROOTFS_TAR is not set
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_E2FSPROGS=y
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_KMOD_XZ=y
+BR2_PACKAGE_HOST_MTOOLS=y

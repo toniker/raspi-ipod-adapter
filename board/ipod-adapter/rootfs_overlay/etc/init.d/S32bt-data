@@ -1,0 +1,38 @@
+#!/bin/sh
+# Mount the small rw data partition (D3) that holds BlueZ's persisted
+# pairing keys at /var/lib/bluetooth -- the only mutable state in the
+# system. Must run before S40bluetoothd. Everything else is the
+# initramfs itself (D2) or tmpfs (D4); nothing else needs a mount here.
+
+DEV="/dev/mmcblk0p2"
+MNT="/var/lib/bluetooth"
+
+start() {
+	mkdir -p "$MNT"
+	if [ -b "$DEV" ]; then
+		mount -t ext4 -o noatime "$DEV" "$MNT" || \
+			echo "S32bt-data: failed to mount $DEV on $MNT, pairing keys will not persist"
+	else
+		echo "S32bt-data: $DEV not found, pairing keys will not persist"
+	fi
+}
+
+stop() {
+	umount "$MNT" 2>/dev/null
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart|reload)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+esac

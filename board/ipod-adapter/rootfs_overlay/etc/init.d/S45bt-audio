@@ -1,0 +1,55 @@
+#!/bin/sh
+# Bluetooth/A2DP-sink bring-up. Replaces the old S98bluetootha2dp, which
+# targeted PulseAudio (never selected in the defconfig) and hardcoded
+# /dev/ttyAMA0 for a manual brcm_patchram_plus firmware load. S35hci-uart
+# now loads the modern hci_uart driver before bluetoothd starts. dbus (S30)
+# and bluetoothd (S40) are already running by the time this runs; bluetoothd
+# itself powers the adapter on via main.conf's [Policy] AutoEnable.
+#
+# This intentionally does NOT start alsaloop: routing bluealsa's PCM to
+# the iPod USB gadget ALSA card is Phase 4 work (that card doesn't exist
+# until Phase 2's kernel modules are packaged).
+
+BT_AGENT="/usr/bin/bt-agent"
+BT_AGENT_PIDFILE="/var/run/bt-agent.pid"
+
+BLUEALSA="/usr/bin/bluealsa"
+BLUEALSA_PIDFILE="/var/run/bluealsa.pid"
+
+start() {
+	printf 'Starting bt-agent: '
+	start-stop-daemon --start --background --make-pidfile \
+		--pidfile "$BT_AGENT_PIDFILE" --exec "$BT_AGENT" \
+		-- --capability=NoInputNoOutput
+	echo "OK"
+
+	printf 'Starting bluealsa (a2dp-sink): '
+	start-stop-daemon --start --background --make-pidfile \
+		--pidfile "$BLUEALSA_PIDFILE" --exec "$BLUEALSA" \
+		-- -p a2dp-sink -S
+	echo "OK"
+
+	bluetoothctl discoverable on >/dev/null 2>&1
+}
+
+stop() {
+	start-stop-daemon --stop --pidfile "$BLUEALSA_PIDFILE" --exec "$BLUEALSA"
+	start-stop-daemon --stop --pidfile "$BT_AGENT_PIDFILE" --exec "$BT_AGENT"
+	rm -f "$BLUEALSA_PIDFILE" "$BT_AGENT_PIDFILE"
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart|reload)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+esac
