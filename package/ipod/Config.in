@@ -1,0 +1,20 @@
+config BR2_PACKAGE_IPOD
+	bool "ipod"
+	depends on BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	help
+	  Go userspace implementation of the iPod Accessory Protocol (iAP).
+	  Runs as `ipod serve /dev/iap0`: it speaks iAP to the car head unit
+	  over the HID character device created by the ipod-gadget kernel
+	  modules, completes the identify/handshake, and starts the audio
+	  session so the "iPodUSB" ALSA card can play.
+
+	  This is the upstream oandrew/ipod, the matching client for the
+	  oandrew/ipod-gadget modules. Metadata is static; AVRCP/D-Bus
+	  metadata passthrough would be a later change.
+
+	  https://github.com/oandrew/ipod
+
+comment "ipod needs a toolchain w/ threads, and a Go-capable architecture"
+	depends on !BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS || \
+		!BR2_TOOLCHAIN_HAS_THREADS

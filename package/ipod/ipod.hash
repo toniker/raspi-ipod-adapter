@@ -1,0 +1,4 @@
+# Locally computed, Go vendoring included (sha256 of the -go2 archive Buildroot
+# produces after `go mod vendor`; deterministic for a given module set).
+sha256  48e181cfe310eef1f2775b7ff15d63f6db19adcb6c3ac6b4cf1d7d96bf8f4438  ipod-3762132cc9ad94c5301dddb9365a923350e0020f-go2.tar.gz
+sha256  4e2145efe8328c8fd26dbb2c16bafb84518f3377d817894fe998362453fff7f2  LICENSE

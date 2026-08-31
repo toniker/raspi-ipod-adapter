@@ -1,0 +1,54 @@
+#!/bin/sh
+# Start the iAP client. `ipod serve /dev/iap0` speaks the iPod Accessory
+# Protocol to the car head unit over the HID char device that S50ipod-gadget
+# created, answers the identify/handshake, and opens the audio session.
+#
+# Opening /dev/iap0 is also what *activates* the USB gadget (it binds to the
+# UDC on first open), so this script is effectively "plug the iPod in". It
+# must run after S50ipod-gadget.
+#
+# The actual audio bytes still need Phase 4 (alsaloop bluealsa -> iPodUSB);
+# this only gets the head unit to recognise the device and enter iPod mode.
+
+DAEMON="ipod"
+IPOD_BIN="/usr/bin/ipod"
+PIDFILE="/var/run/ipod.pid"
+
+DEVICE="/dev/iap0"
+DEBUG=0
+TRACE=''
+
+[ -r /etc/default/ipod ] && . /etc/default/ipod
+
+start() {
+	# S50ipod-gadget already waits for the node; re-check so a failed S50
+	# doesn't leave us spinning in the daemon.
+	if [ ! -e "$DEVICE" ]; then
+		echo "ipod: $DEVICE missing (ipod-gadget modules not loaded?)"
+		return 1
+	fi
+
+	set -- serve
+	[ -n "$TRACE" ] && set -- "$@" -w "$TRACE"
+	set -- "$@" "$DEVICE"
+	[ "$DEBUG" = 1 ] && set -- -d "$@"
+
+	printf 'Starting ipod (iAP client): '
+	start-stop-daemon --start --background --make-pidfile \
+		--pidfile "$PIDFILE" --exec "$IPOD_BIN" -- "$@"
+	echo 'OK'
+}
+
+stop() {
+	printf 'Stopping ipod: '
+	start-stop-daemon --stop --pidfile "$PIDFILE" --exec "$IPOD_BIN"
+	rm -f "$PIDFILE"
+	echo 'OK'
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

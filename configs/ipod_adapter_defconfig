@@ -75,6 +75,9 @@ BR2_PACKAGE_BLUEZ_TOOLS=y
 # ALSA card and /dev/iap0. The USB gadget kernel symbols it needs are in
 # board/ipod-adapter/linux-usb-gadget.fragment; the package adds CONFIG_SND*.
 BR2_PACKAGE_IPOD_GADGET=y
+# iAP client (Go). Runs `ipod serve /dev/iap0`: speaks the iPod Accessory
+# Protocol to the head unit and starts the audio session. Pulls in host-go.
+BR2_PACKAGE_IPOD=y
 # Initramfs rootfs (D2): embedded in the kernel image, nothing on disk
 BR2_TARGET_ROOTFS_INITRAMFS=y
 # BR2_TARGET_ROOTFS_TAR is not set

@@ -1,0 +1,16 @@
+# Settings for /etc/init.d/S60ipod (the iAP client).
+
+# Char device created by the ipod-gadget modules.
+DEVICE=/dev/iap0
+
+# 1 = pass -d (DebugLevel logging) to `ipod`. Very chatty; bring-up only.
+DEBUG=0
+
+# Path for a protocol trace (ipod -w <file>). Empty = no trace. Writing to a
+# tmpfs path is fine; the data partition is not for this. Used when capturing
+# head-unit button presses for Phase 5.
+TRACE=
+
+# Note: do NOT set the client to legacy HID mode (`ipod -l`). Our ipod-gadget
+# is the current one (hid_descriptor.rpt_desc), which the non-legacy path
+# matches.

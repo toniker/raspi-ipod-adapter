@@ -539,6 +539,7 @@ endmenu
 	source "package/iotools/Config.in"
 	source "package/ipmitool/Config.in"
 	source "package/ipmiutil/Config.in"
+	source "package/ipod/Config.in"
 	source "package/ipod-gadget/Config.in"
 	source "package/irda-utils/Config.in"
 	source "package/iucode-tool/Config.in"

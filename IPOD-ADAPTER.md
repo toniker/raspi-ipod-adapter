@@ -18,8 +18,9 @@ phone --A2DP/AVRCP--> BlueZ --> bluealsa --> alsaloop --> ALSA "iPodUSB" --USB--
 ```
 
 This is the target architecture. The current image has the Bluetooth and
-bluealsa pieces; `ipod-gadget`, the Go iAP client, and the `alsaloop` routing
-remain Phase 2–4 work.
+bluealsa pieces, the `ipod-gadget` kernel modules, and the Go iAP client, all
+built into the image (not yet hardware-tested end to end). The `alsaloop`
+routing between the two clock domains is the remaining Phase 4 work.
 
 ---
 
@@ -171,10 +172,23 @@ New/changed files:
 
 ## Phase 3 — Package the iAP client
 
-- [ ] Decide which fork (see open questions)
-- [ ] `package/ipod/` using Buildroot's `golang-package` infra
-- [ ] Confirm `BR2_TOOLCHAIN_SUPPORTS_PIE` with the Buildroot-built internal glibc toolchain (required for Go on ARM). Buildroot ships Go 1.23.
-- [ ] Service that runs `ipod -d serve /dev/iap0` after modules load
+- [x] Decide which fork — **`oandrew/ipod` upstream** (`3762132c`, master HEAD; no commits since Jan 2021). It is the matching client for `oandrew/ipod-gadget`, which we already package. The active forks (`alexankitty/ipod` +56, `teostofell/ipod` +32) are car-specific reverse-engineering (3.7 s audio-open deadlines, Honda Civic / other head-unit quirks, AVRCP metadata) — 30–60 exploratory commits each. The 2005 S40 is an old, simple head unit (no MFi challenge, Phase 0), so those workarounds are more likely to hurt than help. If Phase 5 metadata turns out to be worth it, cherry-pick specific commits then rather than adopt a fork wholesale.
+- [x] `package/ipod/` using Buildroot's `golang-package` infra — build target `cmd/ipod`, MIT. Hash is over the Go-vendored `-go2` archive (deterministic).
+- [x] Confirm `BR2_TOOLCHAIN_SUPPORTS_PIE` with the Buildroot-built internal glibc toolchain — `BR2_TOOLCHAIN_SUPPORTS_PIE=y` and `BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS=y` in the resolved config. Buildroot ships Go 1.23.12. Package builds; binary is ARM EABI5 armhf, dynamically linked, 5.0M stripped.
+- [x] Service that runs `ipod serve /dev/iap0` after modules load — `board/ipod-adapter/rootfs_overlay/etc/init.d/S60ipod` (after `S50ipod-gadget`). Runs **without** `-d` (debug logging is very chatty); `DEBUG=1` / `TRACE=` knobs in `/etc/default/ipod`. Opening `/dev/iap0` is what activates the gadget on the UDC, so S60 is effectively "plug the iPod in".
+
+**Build-verified** (`./build/br make`, exit 0): `ipod` in the initramfs at
+`/usr/bin/ipod`; init order `S45bt-audio → S50ipod-gadget → S60ipod`; zImage
+35M → 37M. Runtime is hardware-only — needs the S40 to enumerate the gadget
+and complete the iAP handshake.
+
+Not done here (deferred): the client is not respawned if it exits, and there
+is no legacy-HID fallback wired up. Both belong in Phase 6.
+
+New/changed files: `package/ipod/{Config.in,ipod.mk,ipod.hash}`,
+`package/Config.in`, `configs/ipod_adapter_defconfig` (`BR2_PACKAGE_IPOD=y`),
+`board/ipod-adapter/rootfs_overlay/etc/init.d/S60ipod`,
+`board/ipod-adapter/rootfs_overlay/etc/default/ipod`.
 
 ## Phase 4 — Bridge the audio ⚠️ main remaining unknown
 
@@ -210,7 +224,7 @@ Everything above is audio-only.
 
 ## Open questions
 
-- [ ] **Which `ipod` client fork?** `oandrew/ipod` (clean, static metadata) vs `geniass/ipod@playstatusnotification` (initial D-Bus metadata passthrough) vs `teostofell/ipod` (what the Ford user in #28 ran). Determines Phase 5 effort.
+- [x] **Which `ipod` client fork?** → **`oandrew/ipod` upstream** (see Phase 3). Clean, static metadata; the matching client for our gadget. `geniass/ipod` is now behind upstream; `teostofell/ipod` / `alexankitty/ipod` are large car-specific forks. Phase 5 metadata, if pursued, is a cherry-pick — not a fork swap.
 - [ ] **Pairing mode trigger** — GPIO button? Boot-time window? Only matters once the rw partition is normally mounted read-only.
 - [ ] **Metadata scope** — is track/artist on the S40 display worth the custom Go work, or is audio-only enough?
 - [x] Which `.hcd` firmware the Zero 2 W's chip actually wants (Zero W used `BCM43430A1.hcd`) — verify, don't assume. **Verified (web research, not on-device):** the Zero 2 W uses the same CYW43438/BCM43438 combo chip as the Zero W, and loads the same base firmware, `BCM43430A1.hcd`, via a board-specific alias `BCM43430A1.raspberrypi,model-zero-2-w.hcd` that the DT-bound driver resolves at runtime. `brcmfmac_sdio-firmware-rpi`'s `BR2_PACKAGE_BRCMFMAC_SDIO_FIRMWARE_RPI_BT` installs the whole `*.hcd` set unconditionally, so no Buildroot-side selection of a specific filename is needed or possible.
