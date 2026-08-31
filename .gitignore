@@ -1,5 +1,7 @@
 /output*
 /dl
+# Generated firmware, filesystem, and SD-card images
+/images/
 /.auto.deps
 /.config.cmd
 /.config.old
