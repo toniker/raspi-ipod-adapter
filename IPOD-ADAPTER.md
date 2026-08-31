@@ -17,6 +17,10 @@ phone --A2DP/AVRCP--> BlueZ --> bluealsa --> alsaloop --> ALSA "iPodUSB" --USB--
                         +--- media keys -----+
 ```
 
+This is the target architecture. The current image has the Bluetooth and
+bluealsa pieces; `ipod-gadget`, the Go iAP client, and the `alsaloop` routing
+remain Phase 2–4 work.
+
 ---
 
 ## Architecture decisions
@@ -25,7 +29,7 @@ phone --A2DP/AVRCP--> BlueZ --> bluealsa --> alsaloop --> ALSA "iPodUSB" --USB--
 |---|---|---|
 | D1 | **Buildroot**, not a hand-rolled distro or Yocto | Buildroot's design centre is exactly this: no on-target package manager, whole-image rebuilds, tiny init. Yocto's OTA/maintenance strengths aren't needed for a personal appliance. |
 | D2 | **Everything in RAM via initramfs** (`BR2_TARGET_ROOTFS_CPIO` + `BR2_TARGET_ROOTFS_INITRAMFS`, embedded in the kernel image) | Immutability is structural rather than enforced. No rootfs mount, no fsck, no journal replay. The car cutting USB power becomes a non-event — the current 120 MB ext4 rootfs would eventually corrupt under repeated unclean power loss. |
-| D3 | **One small rw partition bind-mounted at `/var/lib/bluetooth`** | BlueZ persists pairing keys there. Without it the appliance re-pairs on every ignition. This is the *only* mutable state in the system. |
+| D3 | **One small rw partition mounted at `/var/lib/bluetooth`** | BlueZ persists pairing keys there. Without it the appliance re-pairs on every ignition. This is the *only* mutable state in the system. |
 | D4 | Everything else (`/var/log`, `/tmp`, `/run`) on **tmpfs**, discarded on power loss | Nothing else needs to survive a reboot. |
 | D5 | **bluez-alsa + alsaloop**, not PulseAudio | Small daemon exposing BT audio as ALSA PCMs; handles AVRCP for metadata; doesn't drag a session-bus userspace into an initramfs. `alsaloop` gives rate adaptation for the phone-clock vs USB-isochronous-clock drift. |
 | D6 | **BusyBox init**, not systemd | Boot time; nothing here needs systemd's dependency graph. |
@@ -33,7 +37,7 @@ phone --A2DP/AVRCP--> BlueZ --> bluealsa --> alsaloop --> ALSA "iPodUSB" --USB--
 | D8 | Pi **initiates** reconnect to the last-known phone on boot | Waiting for the phone to notice us is the dominant term in ignition→audio latency (2–10 s) and is otherwise out of our control. |
 | D9 | **Bluetooth stays on the PL011 UART** — no `dtoverlay=miniuart-bt` | The old config moved BT to the mini-UART, whose baud derives from the ARM core clock, forcing `core_freq` to be pinned or HCI traffic corrupts. That is a known cause of the exact "HCI interface not found" failure the old init script kept hitting. BT is the critical path; a headless appliance needs no production serial console, so BT gets the better UART. `enable_uart=1` (console on ttyS0) is kept for bring-up only and should be dropped in Phase 6. |
 | D10 | **Buildroot-built internal toolchain**, not Bootlin's prebuilt | `toolchain-external-bootlin/Config.in` is gated on `BR2_HOSTARCH = "x86_64"`; the build host is an Apple Silicon Mac, so the build container's VM is aarch64 and Bootlin can never be selected — kconfig would silently drop it. Building our own keeps the container native (the alternative, an emulated amd64 image, puts every compiler invocation under Rosetta) and makes the build host-arch independent. Costs ~20–40 min on the first build only. |
-| D12 | **Bluetooth core and HCI UART enabled — requires `CONFIG_RFKILL=y`** | The kernel declares `config BT ... depends on RFKILL \|\| !RFKILL`, and the RPi `bcm2709` defconfig ships `CONFIG_RFKILL=m`. A `=y` symbol cannot depend on an `=m` one, so kconfig silently clamps `CONFIG_BT=y` back to `m`. The final configuration has `RFKILL`, the Bluetooth core, and the BCM HCI UART driver enabled. On the real Pi, however, no device manager autoloaded `hci_uart`; `S35hci-uart` now explicitly activates it before BlueZ. |
+| D12 | **Bluetooth core and HCI UART support enabled — requires `CONFIG_RFKILL=y`** | The kernel declares `config BT ... depends on RFKILL \|\| !RFKILL`, and the RPi `bcm2709` defconfig ships `CONFIG_RFKILL=m`. A `=y` symbol cannot depend on an `=m` one, so kconfig silently clamps `CONFIG_BT=y` back to `m`. The final configuration enables RFKILL, the Bluetooth core, serdev, and the BCM HCI UART support. On the real Pi, the controller did not appear until `modprobe hci_uart` was run; with no device manager to autoload it, `S35hci-uart` now explicitly activates the driver before BlueZ. |
 | D11 | **`alsa-plugins` selected, for `libsamplerate`** | `bluez-alsa` only selects libsamplerate `if BR2_PACKAGE_ALSA_PLUGINS`, and its own Config.in says that plugin "is needed for proper sample rate conversion with Bluetooth devices". Phase 4 has to reconcile two clock domains — have the good resampler in the image before that debugging starts. |
 
 ### Boot budget (ignition → audio)
@@ -93,11 +97,12 @@ and the custom files under `board/raspberrypi/` (`main.conf`, `simple-pin-agent`
 - [x] **Boots on real hardware** — Zero 2 W serial console verified; the BCM43430A1 firmware loaded successfully after `modprobe hci_uart`
 - [ ] **Phone pairs** and the A2DP sink appears
 
-The remaining two are hardware-only and cannot be checked from the build host.
-Flash `images/sdcard.img`, attach a serial console on **ttyS0** (115200 — note
-`enable_uart=1` is present for exactly this, and should be removed in Phase 6),
-and confirm `S35hci-uart` creates `hci0` without the old `brcm_patchram_plus`
-path.
+The remaining phone/A2DP gate is hardware-only and cannot be checked from the
+build host. The first flashed image required manually running `modprobe
+hci_uart`; the rebuilt image includes `S35hci-uart` to perform that step at
+boot. Attach a serial console on **ttyS0** (115200 — note `enable_uart=1` is
+present for exactly this, and should be removed in Phase 6) when validating the
+new image.
 
 ## Phase 1b — Containerised build environment ✅ DONE
 
@@ -124,7 +129,7 @@ two hashes cannot drift.
 - BT firmware includes the board-specific aliases `BCM43430A1.raspberrypi,model-zero-2-w.hcd` **and** `BCM43430B0.raspberrypi,model-zero-2-w.hcd` — which of the two the driver loads depends on the chip revision on the actual board
 - Absent, as intended: PulseAudio, python3
 - Boot partition usage ≈ 38M of 64M (`zImage` 34M + `start.elf` 3M + firmware/overlays), so the 64M guess holds with headroom
-- **Kernel now has `CONFIG_BT=y`, `CONFIG_BT_HCIUART=y`, `CONFIG_BT_HCIUART_SERDEV=y`, `CONFIG_BT_BCM=y`, `CONFIG_RFKILL=y`** — verified in the rebuilt `.config`, with no bluetooth modules left in `/lib/modules` beyond the unused `bluetooth_6lowpan`. See D12; this was silently `=m` in the first build.
+- **Kernel now has `CONFIG_BT=y`, `CONFIG_BT_HCIUART=y`, `CONFIG_BT_HCIUART_SERDEV=y`, `CONFIG_BT_BCM=y`, `CONFIG_RFKILL=y`** — verified in the rebuilt `.config`. The real target still requires explicit `modprobe hci_uart` activation, now performed by `S35hci-uart`; see D12.
 - `CONFIG_BT_HCIVHCI=y` added so the userspace stack can be exercised under QEMU without a real BCM43438. Inert on target — instantiates nothing unless something opens `/dev/vhci`.
 
 ## Phase 2 — Package the gadget kernel modules
@@ -139,7 +144,7 @@ two hashes cannot drift.
 
 - [ ] Decide which fork (see open questions)
 - [ ] `package/ipod/` using Buildroot's `golang-package` infra
-- [ ] Confirm `BR2_TOOLCHAIN_SUPPORTS_PIE` (required for Go on ARM; Bootlin ARMv7 glibc satisfies it). Buildroot ships Go 1.23.
+- [ ] Confirm `BR2_TOOLCHAIN_SUPPORTS_PIE` with the Buildroot-built internal glibc toolchain (required for Go on ARM). Buildroot ships Go 1.23.
 - [ ] Service that runs `ipod -d serve /dev/iap0` after modules load
 
 ## Phase 4 — Bridge the audio ⚠️ main remaining unknown
